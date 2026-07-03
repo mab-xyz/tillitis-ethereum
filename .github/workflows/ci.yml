@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    name: build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build -o /dev/null ./cmd/tkey-eth/
+
+      - name: Vet
+        run: go vet ./cmd/tkey-eth/
+
+      - name: Test
+        run: go test -count=1 ./cmd/tkey-eth/

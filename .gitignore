@@ -1,0 +1,6 @@
+.bin/
+artifacts/
+/tkey-eth
+device/ethsign/*.elf
+device/ethsign/*.o
+scripts/__pycache__/
