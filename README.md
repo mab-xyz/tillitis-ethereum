@@ -16,8 +16,9 @@ The TKey derives a stable secp256k1 key from its internal CDI (Compound Device I
 
 **Device app** (`device/ethsign/`):
 
+- derives exactly one key per (device, app binary, USS): no BIP-32/BIP-44 HD derivation, no derivation path, no account index
 - derives a secp256k1 private key from TKey CDI using BLAKE2s and a fixed domain string
-- returns the uncompressed Ethereum public key
+- returns the uncompressed Ethereum public key (64 bytes X||Y, no `0x04` prefix)
 - signs 32-byte digests on-device; private key never leaves the TKey
 - reports its own BLAKE2s app digest for measurement
 
@@ -68,7 +69,7 @@ The pre-built binary `device/ethsign/app.bin` is included in this repo.
 Output:
 
 ```
-pubkey=0x04...
+pubkey=0x...   # 64 bytes, X||Y, no 0x04 prefix
 address=0x...
 ```
 
