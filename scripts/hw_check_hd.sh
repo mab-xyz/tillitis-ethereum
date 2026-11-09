@@ -8,7 +8,7 @@ BIN=.bin/tkey-eth
 fail() { echo "FAIL: $*"; exit 1; }
 addr() { "$BIN" address --port "$PORT" --path "$1" | sed -n 's/^address=//p'; }
 
-out=$("$BIN" verify-hd --port "$PORT" --count 3 2>&1) || fail "verify-hd: $out"
+out=$("$BIN" verify-hd --port "$PORT" --count 8 2>&1) || fail "verify-hd: $out"
 [ -z "$out" ] || fail "verify-hd not silent: $out"
 
 a0=$(addr "m/44'/60'/0'/0/0") || fail "address /0/0"

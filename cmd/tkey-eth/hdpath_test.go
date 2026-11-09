@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/hex"
+	"math/big"
 	"os"
 	"reflect"
 	"strings"
@@ -99,5 +100,35 @@ func TestCKDPubAgainstSpecVectors(t *testing.T) {
 	}
 	if _, _, err := ckdPub(nodes["000102030405060708090a0b0c0d0e0f m"].pub, nodes["000102030405060708090a0b0c0d0e0f m"].cc, hardened); err == nil {
 		t.Error("ckdPub accepted a hardened index")
+	}
+}
+
+func TestCheckDeviceSignatureAcceptsHighS(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _ := crypto.GenerateKey()
+	pub := crypto.FromECDSAPub(&key.PublicKey)[1:]
+	digest := crypto.Keccak256([]byte("verify-hd"))
+	sig, err := crypto.Sign(digest, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	low := sig[:64]
+	high := append([]byte{}, low...)
+	s := new(big.Int).SetBytes(high[32:])
+	new(big.Int).Sub(crypto.S256().Params().N, s).FillBytes(high[32:])
+
+	if crypto.VerifySignature(append([]byte{0x04}, pub...), digest, high) {
+		t.Fatal("precondition: VerifySignature was expected to reject high-S")
+	}
+	for name, raw := range map[string][]byte{"low-S": low, "high-S": high} {
+		if err := checkDeviceSignature(digest, pub, raw); err != nil {
+			t.Errorf("%s rejected: %v", name, err)
+		}
+	}
+	if err := checkDeviceSignature(digest, crypto.FromECDSAPub(&other.PublicKey)[1:], low); err == nil {
+		t.Error("signature accepted under the wrong pubkey")
 	}
 }

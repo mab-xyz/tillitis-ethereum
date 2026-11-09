@@ -5,8 +5,6 @@ import (
 	"crypto/rand"
 	"flag"
 	"fmt"
-
-	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // runVerifyHD cross-checks the HD app against an independent host implementation:
@@ -64,11 +62,21 @@ func runVerifyHD(args []string) error {
 			if err != nil {
 				return struct{}{}, fmt.Errorf("%s: %w", name, err)
 			}
-			if !crypto.VerifySignature(append([]byte{0x04}, gotPub...), digest[:], sig) {
-				return struct{}{}, fmt.Errorf("%s: signature does not verify under its pubkey", name)
+			if err := checkDeviceSignature(digest[:], gotPub, sig); err != nil {
+				return struct{}{}, fmt.Errorf("%s: %w", name, err)
 			}
 		}
 		return struct{}{}, nil
 	})
 	return err
+}
+
+// checkDeviceSignature accepts a raw device signature (either S half, as uECC
+// returns it) iff it recovers to pub64 after the CLI's own low-S normalization.
+// crypto.VerifySignature alone is wrong here: it rejects high-S signatures.
+func checkDeviceSignature(digest, pub64, rawSig []byte) error {
+	if _, _, err := finalizeEthereumSignature(digest, pub64, rawSig); err != nil {
+		return fmt.Errorf("signature does not recover to its pubkey: %w", err)
+	}
+	return nil
 }
