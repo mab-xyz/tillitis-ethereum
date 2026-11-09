@@ -30,13 +30,14 @@ all: app.bin
 	$(OBJCOPY) --input-target=elf32-littleriscv --output-target=binary $^ $@
 	chmod a-x $@
 
-OBJS = main.o bip32.o app_proto.o uECC.o blake2s.o monocypher.o monocypher-ed25519.o
+OBJS = main.o bip32.o keycache.o app_proto.o uECC.o blake2s.o monocypher.o monocypher-ed25519.o
 
 app.elf: $(OBJS)
 	$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) -o $@
 
-main.o: main.c bip32.h $(LEGACY)/app_proto.h
+main.o: main.c bip32.h keycache.h $(LEGACY)/app_proto.h
 bip32.o: bip32.c bip32.h
+keycache.o: keycache.c keycache.h bip32.h
 app_proto.o: $(LEGACY)/app_proto.c $(LEGACY)/app_proto.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 uECC.o: $(MICROECCDIR)/uECC.c

@@ -13,6 +13,12 @@ bip32_test: test_bip32.c $(P)/../../device/ethsign-hd/bip32.c $(P)/../../device/
 	$(CC) $(CFLAGS) -c -o mono-ed.o $(MONO)/monocypher-ed25519.c
 	$(CC) $(CFLAGS) $(OURFLAGS) -o $@ test_bip32.c uECC.o mono.o mono-ed.o
 
+HD = $(P)/../../device/ethsign-hd
+
+keycache_test: test_keycache.c $(HD)/keycache.c $(HD)/keycache.h $(HD)/bip32.c $(HD)/bip32.h bip32_test
+	$(CC) $(CFLAGS) $(OURFLAGS) -o $@ test_keycache.c $(HD)/keycache.c $(HD)/bip32.c uECC.o mono.o mono-ed.o
+
 .PHONY: test
-test: bip32_test
+test: bip32_test keycache_test
 	./bip32_test $(P)/vectors.txt
+	./keycache_test

@@ -8,6 +8,8 @@
 // path in a 128-byte frame: cmd[1] = depth (0..10), cmd[2..2+4*depth) = indices
 // (u32 big-endian, bit 31 = hardened), then for SIGN_DIGEST the 32-byte digest.
 // GET_PUBKEY replies pubkey (64, X||Y) || chaincode (32).
+// The last derived node and its pubkey stay cached in RAM (keycache.c), so
+// repeated requests for one path skip derivation.
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -22,6 +24,7 @@
 
 #include "../ethsign/app_proto.h"
 #include "bip32.h"
+#include "keycache.h"
 
 static volatile uint32_t *cdi = (volatile uint32_t *)TK1_MMIO_TK1_CDI_FIRST;
 static volatile uint32_t *cpu_mon_ctrl = (volatile uint32_t *)TK1_MMIO_TK1_CPU_MON_CTRL;
@@ -65,15 +68,24 @@ static int tkey_rng(uint8_t *dest, unsigned size)
 	return 1;
 }
 
-// Parses the path at cmd[1..] and derives its node. Returns the offset just
-// after the path, or 0 on a malformed path or invalid child.
-static size_t derive_from_cmd(const uint8_t *cmd, struct bip32_node *node)
+static void cdi_seed(uint8_t seed[32])
 {
 	uint8_t material[32 + sizeof(seed_domain)];
-	uint8_t seed[32];
+
+	memcpy(material, (const uint8_t *)cdi, 32);
+	memcpy(material + 32, seed_domain, sizeof(seed_domain));
+	blake2s(seed, 32, NULL, 0, material, sizeof(material));
+	bip32_wipe(material, sizeof(material));
+}
+
+// Parses the path at cmd[1..] and fetches its node (and pubkey if pub64 != NULL)
+// from the cache. Returns the offset just after the path, or 0 on a malformed
+// path or invalid child.
+static size_t node_from_cmd(const uint8_t *cmd, const struct bip32_node **node,
+			    const uint8_t **pub64)
+{
 	uint32_t path[BIP32_MAX_DEPTH];
 	size_t depth = cmd[1];
-	int rc;
 
 	if (depth > BIP32_MAX_DEPTH) {
 		return 0;
@@ -83,15 +95,10 @@ static size_t derive_from_cmd(const uint8_t *cmd, struct bip32_node *node)
 		path[i] = ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
 			  ((uint32_t)p[2] << 8) | p[3];
 	}
-
-	memcpy(material, (const uint8_t *)cdi, 32);
-	memcpy(material + 32, seed_domain, sizeof(seed_domain));
-	blake2s(seed, sizeof(seed), NULL, 0, material, sizeof(material));
-	rc = bip32_derive(seed, sizeof(seed), path, depth, node);
-	bip32_wipe(material, sizeof(material));
-	bip32_wipe(seed, sizeof(seed));
-
-	return rc == 0 ? 2 + 4 * depth : 0;
+	if (keycache_get(cdi_seed, path, depth, node, pub64) != 0) {
+		return 0;
+	}
+	return 2 + 4 * depth;
 }
 
 static int read_command(struct frame_header *hdr, uint8_t *cmd)
@@ -126,16 +133,15 @@ static void handle_get_nameversion(const struct packet *pkt)
 static void handle_get_pubkey(const struct packet *pkt)
 {
 	uint8_t rsp[CMDLEN_MAXBYTES] = {0};
-	struct bip32_node node;
+	const struct bip32_node *node;
+	const uint8_t *pub;
 
-	if (pkt->hdr.len != 128 || derive_from_cmd(pkt->cmd, &node) == 0 ||
-	    uECC_compute_public_key(node.key, rsp, uECC_secp256k1()) != 1) {
-		bip32_wipe(&node, sizeof(node));
+	if (pkt->hdr.len != 128 || node_from_cmd(pkt->cmd, &node, &pub) == 0) {
 		appreply_nok(pkt->hdr);
 		return;
 	}
-	memcpy(rsp + 64, node.chaincode, 32);
-	bip32_wipe(&node, sizeof(node));
+	memcpy(rsp, pub, 64);
+	memcpy(rsp + 64, node->chaincode, 32);
 	appreply(pkt->hdr, RSP_GET_PUBKEY, rsp);
 }
 
@@ -153,7 +159,7 @@ static void handle_get_app_digest(const struct packet *pkt)
 static void handle_sign_digest(const struct packet *pkt)
 {
 	uint8_t rsp[CMDLEN_MAXBYTES] = {0};
-	struct bip32_node node;
+	const struct bip32_node *node;
 	size_t off;
 
 	if (pkt->hdr.len != 128 || pkt->cmd[1] > BIP32_MAX_DEPTH) {
@@ -169,12 +175,11 @@ static void handle_sign_digest(const struct packet *pkt)
 	}
 #endif
 
-	off = derive_from_cmd(pkt->cmd, &node);
-	if (off == 0 || uECC_sign(node.key, pkt->cmd + off, 32, rsp + 1, uECC_secp256k1()) != 1) {
+	off = node_from_cmd(pkt->cmd, &node, NULL);
+	if (off == 0 || uECC_sign(node->key, pkt->cmd + off, 32, rsp + 1, uECC_secp256k1()) != 1) {
 		rsp[0] = 1;
 		memset(rsp + 1, 0, 64);
 	}
-	bip32_wipe(&node, sizeof(node));
 	appreply(pkt->hdr, RSP_SIGN_DIGEST, rsp);
 }
 
