@@ -244,6 +244,17 @@ child  = CKDpriv(parent, index) for each index of --path
 
 The CDI depends on the app binary, so the two apps derive unrelated keys on the same TKey.
 
+## Signing speed
+
+Measured on a TKey (2026-11-09, `sign-tx` end to end, 10 runs each, spread < 0.2 s):
+
+- `--path m/44'/60'/0'/0/0` (standard): 14.2 s
+- `--path m`: 5.0 s
+- `--path` with 10 levels, 7 of them non-hardened: 36.9 s
+- `address --path m/44'/60'/0'/0/0`: 7.0 s
+
+One secp256k1 scalar multiplication costs about 2.3 s on the TKey CPU, and almost all of the time goes there; HMAC, BLAKE2s and USB I/O are negligible. A signature costs one multiplication, a public key costs one, and every non-hardened path level costs one more (hardened levels are almost free). `sign-tx` derives the path twice, once for the public key and once for the signature. The single-key app (no `--path`) does the same work as `--path m`, so expect about 5 s.
+
 ## Testing
 
 ```bash
