@@ -11,9 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
@@ -59,39 +57,11 @@ func runSignTx(args []string) error {
 	if err != nil {
 		return err
 	}
-	digest := signer.Hash(tx)
-
-	pubkey, sig, err := signDigestWithSigner(cfg, digest.Bytes())
+	out, err := makeTxOutput(deviceSigner(cfg), tx, signer)
 	if err != nil {
 		return err
 	}
-	ethSig, addr, err := finalizeEthereumSignature(digest.Bytes(), pubkey, sig)
-	if err != nil {
-		return err
-	}
-	signedTx, err := tx.WithSignature(signer, ethSig)
-	if err != nil {
-		return err
-	}
-	rawTx, err := signedTx.MarshalBinary()
-	if err != nil {
-		return err
-	}
-	recovered, err := types.Sender(signer, signedTx)
-	if err != nil {
-		return err
-	}
-	if recovered != addr {
-		return fmt.Errorf("recovered sender %s does not match signer %s", recovered.Hex(), addr.Hex())
-	}
-
-	return writeJSONStdout(signTxOutput{
-		Address:        addr.Hex(),
-		Digest:         hexutil.Encode(digest.Bytes()),
-		Signature:      hexutil.Encode(ethSig),
-		RawTransaction: hexutil.Encode(rawTx),
-		TxHash:         signedTx.Hash().Hex(),
-	})
+	return writeJSONStdout(out)
 }
 
 func runSignPersonal(args []string) error {
@@ -113,23 +83,11 @@ func runSignPersonal(args []string) error {
 	if err != nil {
 		return err
 	}
-	hash, _ := accounts.TextAndHash(data)
-	pubkey, sig, err := signDigestWithSigner(cfg, hash)
+	out, err := makePersonalOutput(deviceSigner(cfg), data)
 	if err != nil {
 		return err
 	}
-	ethSig, addr, err := finalizeEthereumSignature(hash, pubkey, sig)
-	if err != nil {
-		return err
-	}
-	if err := verifyRecoveredSignature(hash, ethSig, addr); err != nil {
-		return err
-	}
-	return writeJSONStdout(signOutput{
-		Address:   addr.Hex(),
-		Digest:    hexutil.Encode(hash),
-		Signature: hexutil.Encode(ethSig),
-	})
+	return writeJSONStdout(out)
 }
 
 func runSignTypedData(args []string) error {
@@ -151,27 +109,11 @@ func runSignTypedData(args []string) error {
 	if err := json.Unmarshal(body, &typedData); err != nil {
 		return fmt.Errorf("typed data JSON: %w", err)
 	}
-	hash, encoded, err := apitypes.TypedDataAndHash(typedData)
+	out, err := makeTypedOutput(deviceSigner(cfg), typedData)
 	if err != nil {
 		return err
 	}
-	pubkey, sig, err := signDigestWithSigner(cfg, hash)
-	if err != nil {
-		return err
-	}
-	ethSig, addr, err := finalizeEthereumSignature(hash, pubkey, sig)
-	if err != nil {
-		return err
-	}
-	if err := verifyRecoveredSignature(hash, ethSig, addr); err != nil {
-		return err
-	}
-	return writeJSONStdout(signTypedOutput{
-		Address:   addr.Hex(),
-		Digest:    hexutil.Encode(hash),
-		Signature: hexutil.Encode(ethSig),
-		Encoded:   encoded,
-	})
+	return writeJSONStdout(out)
 }
 
 func signDigestWithSigner(cfg commonFlags, digest []byte) ([]byte, []byte, error) {

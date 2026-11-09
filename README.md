@@ -4,6 +4,8 @@ A hardware-backed Ethereum wallet using the [Tillitis TKey](https://tillitis.se/
 
 The TKey derives a stable secp256k1 key from its internal CDI (Compound Device Identity) — a device-bound secret that never leaves the hardware. The wallet app runs on the TKey, signs digests inside it, and exposes no private key export command.
 
+The command line follows [hw-wallet-cli-spec](https://github.com/mab-xyz/hw-wallet-cli-spec), shared with `yketh` (YubiKey): same commands, flags and JSON. `--device` is the serial port of the TKey (detected when omitted), and `scripts/check_spec.sh` checks the CLI against the spec.
+
 ## What this repo contains
 
 | Path | What it is |
@@ -13,6 +15,7 @@ The TKey derives a stable secp256k1 key from its internal CDI (Compound Device I
 | `device/ethsign-hd/` | TKey device app, BIP-32 HD keys (C, RISC-V) |
 | `tests/bip32/` | Native test of the device BIP-32 code against the BIP-32 spec vectors |
 | `scripts/hw_check_hd.sh` | Hardware check of BIP-32 mode on a plugged TKey |
+| `scripts/check_spec.sh` | Check the CLI against [hw-wallet-cli-spec](https://github.com/mab-xyz/hw-wallet-cli-spec): `--help` flags and golden JSON |
 | `scripts/two_key_ceremony.py` | Operator script for the two-key ceremony |
 
 ## What is implemented
@@ -80,7 +83,7 @@ The pre-built binary `device/ethsign-hd/app.bin` is included as well. Both binar
 ### Get the Ethereum address
 
 ```bash
-.bin/tkey-eth address --port /dev/ttyACM0
+.bin/tkey-eth address --device /dev/ttyACM0
 ```
 
 Output:
@@ -89,6 +92,16 @@ Output:
 pubkey=0x...   # 64 bytes, X||Y, no 0x04 prefix
 address=0x...
 ```
+
+`--json` prints the same two fields as a JSON object.
+
+### Sign a raw digest
+
+```bash
+.bin/tkey-eth sign-digest --device /dev/ttyACM0 --digest 0x<32 bytes>
+```
+
+Output is JSON with `address`, `digest` and `signature`.
 
 ### Sign a transaction
 
@@ -108,23 +121,23 @@ Prepare an unsigned transaction JSON file:
 ```
 
 ```bash
-.bin/tkey-eth sign-tx --port /dev/ttyACM0 --tx tx.json
+.bin/tkey-eth sign-tx --device /dev/ttyACM0 --tx tx.json
 ```
 
-Output is JSON with `address`, `digest`, `signature`, `raw_transaction`, and `tx_hash`.
+Output is JSON with `address`, `digest`, `signature`, `raw_transaction`, and `tx_hash`. Every `signature` is `0x` + r‖s‖v (65 bytes, low s) with **v = 27 or 28**, what `ecrecover` and OpenZeppelin take; the transaction inside `raw_transaction` carries its own v.
 
 ### Sign a personal message
 
 ```bash
-.bin/tkey-eth sign-personal --port /dev/ttyACM0 --message 'hello'
+.bin/tkey-eth sign-personal --device /dev/ttyACM0 --message 'hello'
 # or from a file:
-.bin/tkey-eth sign-personal --port /dev/ttyACM0 --message-file msg.bin
+.bin/tkey-eth sign-personal --device /dev/ttyACM0 --message-file msg.bin
 ```
 
 ### Sign EIP-712 typed data
 
 ```bash
-.bin/tkey-eth sign-typed-data --port /dev/ttyACM0 --typed-data typed-data.json
+.bin/tkey-eth sign-typed-data --device /dev/ttyACM0 --typed-data typed-data.json
 ```
 
 ### User secret (USS)
@@ -133,7 +146,7 @@ To bind the wallet key to a user passphrase in addition to the device identity:
 
 ```bash
 echo -n "my-passphrase" > uss.bin
-.bin/tkey-eth address --port /dev/ttyACM0 --uss-file uss.bin
+.bin/tkey-eth address --device /dev/ttyACM0 --uss-file uss.bin
 ```
 
 The TKey must be replugged to change the USS.
@@ -143,8 +156,8 @@ The TKey must be replugged to change the USS.
 `address`, `sign-digest`, `sign-tx`, `sign-personal` and `sign-typed-data` accept `--path`. With it, the CLI loads `device/ethsign-hd/app.bin` (unless `--app` is given) and uses the key at that path; without it, nothing changes and the single-key app is used.
 
 ```bash
-.bin/tkey-eth address --port /dev/ttyACM0 --path "m/44'/60'/0'/0/0"
-.bin/tkey-eth sign-personal --port /dev/ttyACM0 --path "m/44'/60'/0'/0/1" --message "hello"
+.bin/tkey-eth address --device /dev/ttyACM0 --path "m/44'/60'/0'/0/0"
+.bin/tkey-eth sign-personal --device /dev/ttyACM0 --path "m/44'/60'/0'/0/1" --message "hello"
 ```
 
 Hardened indices take `'`, `h` or `H`. Only one app runs per power cycle: switching between `--path` and no `--path` requires replugging the TKey (the CLI says so). The seed is never exported, so these addresses cannot be restored in another wallet from a mnemonic.
@@ -158,7 +171,7 @@ The wallet ships two verification flows. Neither requires trust in operator test
 A verifier starts from firmware mode, observes the full loading sequence, and produces a signed transcript.
 
 ```bash
-.bin/tkey-eth verify-live --port /dev/ttyACM0 --out artifacts/live-verify.json
+.bin/tkey-eth verify-live --device /dev/ttyACM0 --out artifacts/live-verify.json
 ```
 
 The verifier witnesses:
@@ -180,7 +193,7 @@ Produces an offline-verifiable bundle where both the Tillitis identity key and t
 Run the guided ceremony:
 
 ```bash
-python3 scripts/two_key_ceremony.py --port /dev/ttyACM0
+python3 scripts/two_key_ceremony.py --device /dev/ttyACM0
 ```
 
 The script drives three phases (each requires a replug to return to firmware mode):
@@ -214,12 +227,14 @@ The verifier checks:
 A weaker but self-contained flow that issues a certificate over the wallet pubkey signed by a locally generated attestation key, then produces a challenge-response proof.
 
 ```bash
-.bin/tkey-eth attest --port /dev/ttyACM0 --out artifacts/cert.json
+.bin/tkey-eth attest --device /dev/ttyACM0 --out artifacts/cert.json
 .bin/tkey-eth prove --cert artifacts/cert.json --out artifacts/proof.json
 .bin/tkey-eth verify --cert artifacts/cert.json --proof artifacts/proof.json
 ```
 
 The attestation key is self-generated; this flow does not involve Tillitis vendor signatures.
+
+`attest` writes the certificate to `--out` and prints `{"kind": "tkey-self", "address": …, "cert": …}`; `verify` prints `{"kind": "tkey-self", "address": …, "certificate": "ok"}` (plus `"proof": "ok"` with `--proof`). `kind` tells a verifier how strong the proof is: `tkey-self` is self-asserted, unlike `yubico-opgp` from `yketh`, which chains to a Yubico root.
 
 ## Key derivation
 

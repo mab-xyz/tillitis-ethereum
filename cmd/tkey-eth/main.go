@@ -18,86 +18,38 @@ import (
 
 var logger = log.New(os.Stderr, "", 0)
 
+// commands maps each subcommand to its implementation.
+var commands = map[string]func(args []string) error{
+	"address":               runAddress,
+	"sign-digest":           runSignDigest,
+	"sign-tx":               runSignTx,
+	"sign-personal":         runSignPersonal,
+	"sign-typed-data":       runSignTypedData,
+	"verify-hd":             runVerifyHD,
+	"verify-live":           runVerifyLive,
+	"bind-two-key-init":     runTwoKeyInit,
+	"bind-two-key-wallet":   runTwoKeyWallet,
+	"bind-two-key-finalize": runTwoKeyFinalize,
+	"verify-two-key":        runTwoKeyVerify,
+	"attest":                runAttest,
+	"prove":                 runProve,
+	"verify":                runVerify,
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
 	}
-
-	switch os.Args[1] {
-	case "address":
-		if err := runAddress(os.Args[2:]); err != nil {
-			logger.Printf("address: %v", err)
-			os.Exit(1)
-		}
-	case "sign-digest":
-		if err := runSignDigest(os.Args[2:]); err != nil {
-			logger.Printf("sign-digest: %v", err)
-			os.Exit(1)
-		}
-	case "sign-tx":
-		if err := runSignTx(os.Args[2:]); err != nil {
-			logger.Printf("sign-tx: %v", err)
-			os.Exit(1)
-		}
-	case "sign-personal":
-		if err := runSignPersonal(os.Args[2:]); err != nil {
-			logger.Printf("sign-personal: %v", err)
-			os.Exit(1)
-		}
-	case "sign-typed-data":
-		if err := runSignTypedData(os.Args[2:]); err != nil {
-			logger.Printf("sign-typed-data: %v", err)
-			os.Exit(1)
-		}
-	case "verify-hd":
-		if err := runVerifyHD(os.Args[2:]); err != nil {
-			logger.Printf("verify-hd: %v", err)
-			os.Exit(1)
-		}
-	case "verify-live":
-		if err := runVerifyLive(os.Args[2:]); err != nil {
-			logger.Printf("verify-live: %v", err)
-			os.Exit(1)
-		}
-	case "bind-two-key-init":
-		if err := runTwoKeyInit(os.Args[2:]); err != nil {
-			logger.Printf("bind-two-key-init: %v", err)
-			os.Exit(1)
-		}
-	case "bind-two-key-wallet":
-		if err := runTwoKeyWallet(os.Args[2:]); err != nil {
-			logger.Printf("bind-two-key-wallet: %v", err)
-			os.Exit(1)
-		}
-	case "bind-two-key-finalize":
-		if err := runTwoKeyFinalize(os.Args[2:]); err != nil {
-			logger.Printf("bind-two-key-finalize: %v", err)
-			os.Exit(1)
-		}
-	case "verify-two-key":
-		if err := runTwoKeyVerify(os.Args[2:]); err != nil {
-			logger.Printf("verify-two-key: %v", err)
-			os.Exit(1)
-		}
-	case "attest":
-		if err := runAttest(os.Args[2:]); err != nil {
-			logger.Printf("attest: %v", err)
-			os.Exit(1)
-		}
-	case "prove":
-		if err := runProve(os.Args[2:]); err != nil {
-			logger.Printf("prove: %v", err)
-			os.Exit(1)
-		}
-	case "verify":
-		if err := runVerify(os.Args[2:]); err != nil {
-			logger.Printf("verify: %v", err)
-			os.Exit(1)
-		}
-	default:
+	run, ok := commands[os.Args[1]]
+	if !ok {
 		usage()
 		os.Exit(2)
+	}
+	// `<command> --help` is a success: the flag package reports it as flag.ErrHelp after printing the usage.
+	if err := run(os.Args[2:]); err != nil && !errors.Is(err, flag.ErrHelp) {
+		logger.Printf("%s: %v", os.Args[1], err)
+		os.Exit(1)
 	}
 }
 
@@ -122,7 +74,7 @@ type commonFlags struct {
 }
 
 func addCommonFlags(fs *flag.FlagSet, cfg *commonFlags) {
-	fs.StringVar(&cfg.port, "port", "", "Serial device path")
+	fs.StringVar(&cfg.port, "device", "", "Serial device path of the TKey (default: detected)")
 	fs.StringVar(&cfg.appPath, "app", defaultAppPath(), "Path to device app binary")
 	fs.StringVar(&cfg.ussFile, "uss-file", "", "Load app with USS file")
 	fs.BoolVar(&cfg.verbose, "verbose", false, "Verbose logging")
@@ -136,8 +88,10 @@ func addPathFlag(fs *flag.FlagSet, cfg *commonFlags) {
 func runAddress(args []string) error {
 	fs := flag.NewFlagSet("address", flag.ContinueOnError)
 	var cfg commonFlags
+	var asJSON bool
 	addCommonFlags(fs, &cfg)
 	addPathFlag(fs, &cfg)
+	fs.BoolVar(&asJSON, "json", false, "Print JSON instead of key=value lines")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -149,13 +103,15 @@ func runAddress(args []string) error {
 		return err
 	}
 
-	addr, err := ethereumAddress(pubkey)
+	out, err := makeAddressOutput(pubkey)
 	if err != nil {
 		return err
 	}
-
-	fmt.Printf("pubkey=0x%s\n", hex.EncodeToString(pubkey))
-	fmt.Printf("address=%s\n", addr.Hex())
+	if asJSON {
+		return writeJSONStdout(out)
+	}
+	fmt.Printf("pubkey=%s\n", out.Pubkey)
+	fmt.Printf("address=%s\n", out.Address)
 	return nil
 }
 
@@ -178,33 +134,11 @@ func runSignDigest(args []string) error {
 		return err
 	}
 
-	type result struct {
-		pubkey []byte
-		sig    []byte
-	}
-	out, err := withSigner(cfg, func(s *ethSigner) (*result, error) {
-		pubkey, err := s.GetPubkey()
-		if err != nil {
-			return nil, err
-		}
-		sig, err := s.SignDigest(digest[:])
-		if err != nil {
-			return nil, err
-		}
-		return &result{pubkey: pubkey, sig: sig}, nil
-	})
+	out, err := makeDigestOutput(deviceSigner(cfg), digest[:])
 	if err != nil {
 		return err
 	}
-
-	ethSig, addr, err := finalizeEthereumSignature(digest[:], out.pubkey, out.sig)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("address=%s\n", addr.Hex())
-	fmt.Printf("signature=0x%s\n", hex.EncodeToString(ethSig))
-	return nil
+	return writeJSONStdout(out)
 }
 
 func withSigner[T any](cfg commonFlags, fn func(*ethSigner) (T, error)) (T, error) {

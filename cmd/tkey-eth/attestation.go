@@ -174,7 +174,10 @@ func runAttest(args []string) error {
 		cert.TillitisEvidence = evidence
 	}
 
-	return writeJSON(outPath, cert)
+	if err := writeJSON(outPath, cert); err != nil {
+		return err
+	}
+	return writeJSONStdout(makeAttestOutput(cert, outPath))
 }
 
 func runProve(args []string) error {
@@ -260,10 +263,9 @@ func runVerify(args []string) error {
 	if err := verifyCertificate(cert); err != nil {
 		return err
 	}
-	fmt.Println("certificate: ok")
 
 	if proofPath == "" {
-		return nil
+		return writeJSONStdout(makeVerifyOutput(cert, false))
 	}
 
 	p, err := readProof(proofPath)
@@ -273,8 +275,7 @@ func runVerify(args []string) error {
 	if err := verifyProof(p); err != nil {
 		return err
 	}
-	fmt.Println("proof: ok")
-	return nil
+	return writeJSONStdout(makeVerifyOutput(cert, true))
 }
 
 func prepareWallet(cfg commonFlags, requireUDI bool) (*preparedWallet, error) {

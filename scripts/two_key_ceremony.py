@@ -96,7 +96,7 @@ def parse_args() -> argparse.Namespace:
         description="Guide and execute the Tillitis two-key binding ceremony."
     )
     parser.add_argument("--bin", default=DEFAULT_BIN, help="Path to tkey-eth binary")
-    parser.add_argument("--port", default="/dev/ttyACM0", help="Serial device path")
+    parser.add_argument("--device", default="/dev/ttyACM0", help="Serial device path")
     parser.add_argument("--bundle", default=DEFAULT_BUNDLE, help="Output bundle JSON")
     parser.add_argument("--app", default=DEFAULT_APP, help="Wallet app binary")
     parser.add_argument(
@@ -117,11 +117,11 @@ def main() -> int:
 
     print("Tillitis two-key ceremony")
     print(f"Binary: {args.bin}")
-    print(f"Port:   {args.port}")
+    print(f"Port:   {args.device}")
     print(f"Wallet: {args.app}")
     print(f"Bundle: {args.bundle}")
 
-    wait_for_device(args.port, args.dry_run)
+    wait_for_device(args.device, args.dry_run)
     prompt(
         "Start with the TKey freshly replugged in firmware mode. "
         "Do not load the Ethereum wallet app yet.",
@@ -132,8 +132,8 @@ def main() -> int:
         [
             args.bin,
             "bind-two-key-init",
-            "--port",
-            args.port,
+            "--device",
+            args.device,
             "--out",
             args.bundle,
         ],
@@ -150,8 +150,8 @@ def main() -> int:
         [
             args.bin,
             "bind-two-key-wallet",
-            "--port",
-            args.port,
+            "--device",
+            args.device,
             "--app",
             args.app,
             "--bundle",
@@ -170,8 +170,8 @@ def main() -> int:
         [
             args.bin,
             "bind-two-key-finalize",
-            "--port",
-            args.port,
+            "--device",
+            args.device,
             "--bundle",
             args.bundle,
         ],
