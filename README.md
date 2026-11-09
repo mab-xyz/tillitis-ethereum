@@ -9,7 +9,10 @@ The TKey derives a stable secp256k1 key from its internal CDI (Compound Device I
 | Path | What it is |
 |------|------------|
 | `cmd/tkey-eth/` | Host CLI — build, run, and verify |
-| `device/ethsign/` | TKey device app (C, RISC-V) |
+| `device/ethsign/` | TKey device app, single key (C, RISC-V) |
+| `device/ethsign-hd/` | TKey device app, BIP-32 HD keys (C, RISC-V) |
+| `tests/bip32/` | Native test of the device BIP-32 code against the BIP-32 spec vectors |
+| `scripts/hw_check_hd.sh` | Hardware check of BIP-32 mode on a plugged TKey |
 | `scripts/two_key_ceremony.py` | Operator script for the two-key ceremony |
 
 ## What is implemented
@@ -22,6 +25,12 @@ The TKey derives a stable secp256k1 key from its internal CDI (Compound Device I
 - signs 32-byte digests on-device; private key never leaves the TKey
 - reports its own BLAKE2s app digest for measurement
 
+**HD device app** (`device/ethsign-hd/`, name `eth `/`hd32`):
+
+- BIP-32 private derivation (hardened and normal) from a seed `BLAKE2s(CDI || "tkey-eth-bip32-v1\0")`
+- `GET_PUBKEY` and `SIGN_DIGEST` take a path (up to 10 levels); `GET_PUBKEY` also returns the chain code
+- different binary from `device/ethsign/`, hence a different CDI: its keys are unrelated to the single-key address
+
 **Host CLI** (`cmd/tkey-eth/`):
 
 | Command | What it does |
@@ -31,6 +40,7 @@ The TKey derives a stable secp256k1 key from its internal CDI (Compound Device I
 | `sign-tx` | Sign an unsigned Ethereum transaction (JSON) |
 | `sign-personal` | Sign a `personal_sign` message |
 | `sign-typed-data` | Sign EIP-712 typed data |
+| `verify-hd` | Check the HD app's child keys against a host CKDpub and its signatures (silent on success) |
 | `verify-live` | Run a live verifier session and write a verifier transcript |
 | `bind-two-key-init` | Phase 1 of the two-key ceremony: capture Tillitis identity |
 | `bind-two-key-wallet` | Phase 2: capture wallet key and Ethereum signature |
@@ -57,6 +67,12 @@ make -C device/ethsign
 ```
 
 The pre-built binary `device/ethsign/app.bin` is included in this repo.
+
+```bash
+make -C device/ethsign-hd
+```
+
+The pre-built binary `device/ethsign-hd/app.bin` is included as well. Both binaries rebuild byte-identically with the pinned toolchain; any change to a binary changes the keys it derives.
 
 ## Usage
 
@@ -120,6 +136,17 @@ echo -n "my-passphrase" > uss.bin
 ```
 
 The TKey must be replugged to change the USS.
+
+### HD addresses (BIP-32 `--path`)
+
+`address`, `sign-digest`, `sign-tx`, `sign-personal` and `sign-typed-data` accept `--path`. With it, the CLI loads `device/ethsign-hd/app.bin` (unless `--app` is given) and uses the key at that path; without it, nothing changes and the single-key app is used.
+
+```bash
+.bin/tkey-eth address --port /dev/ttyACM0 --path "m/44'/60'/0'/0/0"
+.bin/tkey-eth sign-personal --port /dev/ttyACM0 --path "m/44'/60'/0'/0/1" --message "hello"
+```
+
+Hardened indices take `'`, `h` or `H`. Only one app runs per power cycle: switching between `--path` and no `--path` requires replugging the TKey (the CLI says so). The seed is never exported, so these addresses cannot be restored in another wallet from a mnemonic.
 
 ## Verification flows
 
@@ -207,11 +234,25 @@ for counter = 0, 1, 2, ...:
 
 The CDI is device-bound and never exported. The same TKey with the same USS always derives the same key.
 
+The HD app (`device/ethsign-hd/bip32.c`) derives per BIP-32:
+
+```
+seed   = BLAKE2s(CDI || "tkey-eth-bip32-v1\0")              # 32 bytes
+master = HMAC-SHA512("Bitcoin seed", seed)                # key || chain code
+child  = CKDpriv(parent, index) for each index of --path
+```
+
+The CDI depends on the app binary, so the two apps derive unrelated keys on the same TKey.
+
 ## Testing
 
 ```bash
 go test ./cmd/tkey-eth/
+make -C tests/bip32 test      # device BIP-32 code vs BIP-32 spec vectors 1-4, natively; silent on success
+scripts/hw_check_hd.sh        # needs a TKey with the HD app loadable (fresh plug); silent on success
 ```
+
+`tests/bip32/vectors.txt` is extracted from `bip-0032.mediawiki` by `tests/bip32/gen_vectors.py`. The Go tests also check the host CKDpub against the non-hardened steps of the same vectors.
 
 Tests cover all pure functions (hex decoding, address derivation, signature finalization, low-S normalization, transaction parsing, certificate encoding and verification, proof verification, two-key payload encoding, and UDI round-trips). No device is required.
 
@@ -221,7 +262,7 @@ Tests cover all pure functions (hex decoding, address derivation, signature fina
 |----------|--------|
 | Private key never leaves the TKey | Yes — the device app has no export command |
 | Key is deterministic from CDI | Yes — same TKey + USS = same key |
-| Key derivation is auditable | Yes — source in `device/ethsign/main.c` |
+| Key derivation is auditable | Yes — source in `device/ethsign/main.c` and `device/ethsign-hd/bip32.c` |
 | Vendor-attested Ethereum pubkey | No — not available without a separate attestation app |
 | Proof that key was generated on-device (not imported) | No — current flows cannot prove this |
 | Low-s signature normalization (EIP-2) | Yes — done in the host CLI |
