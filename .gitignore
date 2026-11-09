@@ -4,3 +4,8 @@ artifacts/
 device/ethsign/*.elf
 device/ethsign/*.o
 scripts/__pycache__/
+plan-*.md
+device/ethsign-hd/*.elf
+device/ethsign-hd/*.o
+tests/bip32/bip32_test
+tests/bip32/*.o
