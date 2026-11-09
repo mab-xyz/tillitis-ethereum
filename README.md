@@ -29,6 +29,7 @@ The TKey derives a stable secp256k1 key from its internal CDI (Compound Device I
 
 - BIP-32 private derivation (hardened and normal) from a seed `BLAKE2s(CDI || "tkey-eth-bip32-v1\0")`
 - `GET_PUBKEY` and `SIGN_DIGEST` take a path (up to 10 levels); `GET_PUBKEY` also returns the chain code
+- caches the last derived key and public key in RAM until unplug (see [Signing speed](#signing-speed))
 - different binary from `device/ethsign/`, hence a different CDI: its keys are unrelated to the single-key address
 
 **Host CLI** (`cmd/tkey-eth/`):
@@ -246,14 +247,16 @@ The CDI depends on the app binary, so the two apps derive unrelated keys on the 
 
 ## Signing speed
 
-Measured on a TKey (2026-11-09, `sign-tx` end to end, 10 runs each, spread < 0.2 s):
+Measured on a TKey (2026-11-09, end to end including the CLI, spread ≤ 0.05 s). "First" is the first request for a path since the TKey was plugged in or since another path was used (5 runs); "repeat" is the same path again (10 runs):
 
-- `--path m/44'/60'/0'/0/0` (standard): 14.2 s
-- `--path m`: 5.0 s
-- `--path` with 10 levels, 7 of them non-hardened: 36.9 s
-- `address --path m/44'/60'/0'/0/0`: 7.0 s
+- `sign-tx --path m/44'/60'/0'/0/0` (standard): first 9.6 s, repeat 2.7 s
+- `sign-tx --path m`: first 5.0 s, repeat 2.7 s
+- `sign-tx --path` with 10 levels, 7 of them non-hardened: first 20.9 s, repeat 2.7 s
+- `address --path m/44'/60'/0'/0/0`: first 7.0 s, repeat 0.1 s
 
-One secp256k1 scalar multiplication costs about 2.3 s on the TKey CPU, and almost all of the time goes there; HMAC, BLAKE2s and USB I/O are negligible. A signature costs one multiplication, a public key costs one, and every non-hardened path level costs one more (hardened levels are almost free). `sign-tx` derives the path twice, once for the public key and once for the signature. The single-key app (no `--path`) does the same work as `--path m`, so expect about 5 s.
+The HD app keeps the last derived key and its public key in RAM until the TKey is unplugged, so signing again with the same address costs a single ECDSA signature. Using another path replaces the cached key.
+
+Almost all of the time goes to secp256k1 arithmetic on the TKey CPU: about 2.3 s per public-key computation (one per non-hardened path level, plus one for the final public key) and about 2.6 s per signature. Hardened levels, HMAC, BLAKE2s and USB I/O are negligible. The single-key app (no `--path`) has no cache and computes the public key and the signature on every `sign-tx`; expect about 5 s, like the first `--path m` request.
 
 ## Testing
 
