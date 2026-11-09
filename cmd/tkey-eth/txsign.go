@@ -45,6 +45,7 @@ func runSignTx(args []string) error {
 	var cfg commonFlags
 	var txPath string
 	addCommonFlags(fs, &cfg)
+	addPathFlag(fs, &cfg)
 	fs.StringVar(&txPath, "tx", "-", "Path to unsigned transaction JSON, or - for stdin")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -100,6 +101,7 @@ func runSignPersonal(args []string) error {
 	var msgHex string
 	var msgPath string
 	addCommonFlags(fs, &cfg)
+	addPathFlag(fs, &cfg)
 	fs.StringVar(&msg, "message", "", "UTF-8 message string")
 	fs.StringVar(&msgHex, "message-hex", "", "Message bytes as hex")
 	fs.StringVar(&msgPath, "message-file", "", "Path to message bytes")
@@ -135,6 +137,7 @@ func runSignTypedData(args []string) error {
 	var cfg commonFlags
 	var typedPath string
 	addCommonFlags(fs, &cfg)
+	addPathFlag(fs, &cfg)
 	fs.StringVar(&typedPath, "typed-data", "-", "Path to EIP-712 typed data JSON, or - for stdin")
 	if err := fs.Parse(args); err != nil {
 		return err

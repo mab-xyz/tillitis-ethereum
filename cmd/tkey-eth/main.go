@@ -50,6 +50,11 @@ func main() {
 			logger.Printf("sign-typed-data: %v", err)
 			os.Exit(1)
 		}
+	case "verify-hd":
+		if err := runVerifyHD(os.Args[2:]); err != nil {
+			logger.Printf("verify-hd: %v", err)
+			os.Exit(1)
+		}
 	case "verify-live":
 		if err := runVerifyLive(os.Args[2:]); err != nil {
 			logger.Printf("verify-live: %v", err)
@@ -97,7 +102,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s <address|sign-digest|sign-tx|sign-personal|sign-typed-data|verify-live|bind-two-key-init|bind-two-key-wallet|bind-two-key-finalize|verify-two-key|attest|prove|verify> [flags]\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "Usage: %s <address|sign-digest|sign-tx|sign-personal|sign-typed-data|verify-hd|verify-live|bind-two-key-init|bind-two-key-wallet|bind-two-key-finalize|verify-two-key|attest|prove|verify> [flags]\n", filepath.Base(os.Args[0]))
 }
 
 func defaultAppPath() string {
@@ -113,6 +118,7 @@ type commonFlags struct {
 	appPath string
 	ussFile string
 	verbose bool
+	hdPath  string
 }
 
 func addCommonFlags(fs *flag.FlagSet, cfg *commonFlags) {
@@ -122,10 +128,16 @@ func addCommonFlags(fs *flag.FlagSet, cfg *commonFlags) {
 	fs.BoolVar(&cfg.verbose, "verbose", false, "Verbose logging")
 }
 
+// addPathFlag adds --path; only commands that open the device through withSigner support it.
+func addPathFlag(fs *flag.FlagSet, cfg *commonFlags) {
+	fs.StringVar(&cfg.hdPath, "path", "", "BIP-32 path, e.g. m/44'/60'/0'/0/0; uses the HD app (device/ethsign-hd) instead of the single-key app")
+}
+
 func runAddress(args []string) error {
 	fs := flag.NewFlagSet("address", flag.ContinueOnError)
 	var cfg commonFlags
 	addCommonFlags(fs, &cfg)
+	addPathFlag(fs, &cfg)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -152,6 +164,7 @@ func runSignDigest(args []string) error {
 	var cfg commonFlags
 	var digestHex string
 	addCommonFlags(fs, &cfg)
+	addPathFlag(fs, &cfg)
 	fs.StringVar(&digestHex, "digest", "", "32-byte digest as hex")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -209,7 +222,20 @@ func withSigner[T any](cfg commonFlags, fn func(*ethSigner) (T, error)) (T, erro
 		}
 	}
 
-	app, err := os.ReadFile(cfg.appPath)
+	var path []uint32
+	appPath, wantName1 := cfg.appPath, legacyName1
+	if cfg.hdPath != "" {
+		var err error
+		if path, err = parseHDPath(cfg.hdPath); err != nil {
+			return zero, err
+		}
+		wantName1 = hdAppName1
+		if appPath == defaultAppPath() {
+			appPath = defaultHDAppPath()
+		}
+	}
+
+	app, err := os.ReadFile(appPath)
 	if err != nil {
 		return zero, err
 	}
@@ -229,14 +255,15 @@ func withSigner[T any](cfg commonFlags, fn func(*ethSigner) (T, error)) (T, erro
 	defer tk.Close()
 
 	s := newEthSigner(tk)
-	if err := ensureAppLoaded(tk, s, app, uss); err != nil {
+	s.path = path
+	if err := ensureAppLoaded(tk, s, app, uss, wantName1); err != nil {
 		return zero, err
 	}
 
 	return fn(&s)
 }
 
-func ensureAppLoaded(tk *tkeyclient.TillitisKey, s ethSigner, app []byte, uss []byte) error {
+func ensureAppLoaded(tk *tkeyclient.TillitisKey, s ethSigner, app []byte, uss []byte, wantName1 string) error {
 	nameVer, err := tk.GetNameVersion()
 	if err == nil && nameVer.Name0 == "tk1 " && nameVer.Name1 == "mkdf" {
 		return tk.LoadApp(app, uss)
@@ -246,8 +273,8 @@ func ensureAppLoaded(tk *tkeyclient.TillitisKey, s ethSigner, app []byte, uss []
 	if err != nil {
 		return fmt.Errorf("device not in firmware mode and eth app not running: %w", err)
 	}
-	if appName.Name0 != "eth " || appName.Name1 != "sign" {
-		return fmt.Errorf("unexpected app running: %q/%q", appName.Name0, appName.Name1)
+	if appName.Name0 != "eth " || appName.Name1 != wantName1 {
+		return fmt.Errorf("app %q/%q is running, need %q/%q; replug the TKey", appName.Name0, appName.Name1, "eth ", wantName1)
 	}
 	if len(uss) != 0 {
 		return errors.New("app already running; replug to apply --uss-file")
